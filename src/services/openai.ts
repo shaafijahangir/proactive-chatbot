@@ -1,5 +1,13 @@
-// This is a placeholder for the actual OpenAI API integration
-// In a real application, you would need to set up a backend service to handle API keys securely
+import OpenAI from 'openai';
+
+// Define the API key from environment variables
+const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+
+// Initialize the OpenAI client
+const openai = new OpenAI({
+  apiKey: apiKey,
+  dangerouslyAllowBrowser: true // Note: This is not recommended for production apps
+});
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -11,59 +19,118 @@ export interface ChatResponse {
   suggestedPrompts: string[];
 }
 
-// Simulate API call to OpenAI
-export const sendMessage = async (messages: ChatMessage[]): Promise<ChatResponse> => {
-  // In a real app, this would be an API call to your backend
-  // which would then call the OpenAI API
-  
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  const lastMessage = messages[messages.length - 1];
-  
-  // Generate a response based on the last message
-  let responseText = '';
-  let suggestedPrompts: string[] = [];
-  
-  if (lastMessage.content.toLowerCase().includes('hello') || lastMessage.content.toLowerCase().includes('hi')) {
-    responseText = "Hello! I'm your AI assistant. How can I help you today?";
-    suggestedPrompts = [
-      "What can you do?",
-      "Tell me about yourself",
-      "How does this chatbot work?",
-      "What topics can you help with?"
-    ];
-  } else if (lastMessage.content.toLowerCase().includes('weather')) {
-    responseText = "I don't have access to real-time weather data, but I can discuss weather patterns, climate, or help you understand meteorological concepts.";
-    suggestedPrompts = [
-      "What causes rain?",
-      "How do weather forecasts work?",
-      "Tell me about climate change",
-      "What's the difference between weather and climate?"
-    ];
-  } else if (lastMessage.content.toLowerCase().includes('help')) {
-    responseText = "I'm here to help! I can answer questions, provide information, or just chat. What would you like to know about?";
-    suggestedPrompts = [
-      "What topics do you know about?",
-      "Can you write code?",
-      "How do I use this chatbot effectively?",
-      "What are your limitations?"
-    ];
-  } else {
-    responseText = `I received your message: "${lastMessage.content}". That's an interesting topic. Would you like to know more about it?`;
-    suggestedPrompts = [
-      "Tell me more details about this",
-      "What are the key concepts I should know?",
-      "Are there any common misconceptions?",
-      "How is this applied in the real world?"
+// Function to generate follow-up questions based on the conversation
+const generateFollowUpQuestions = async (conversation: ChatMessage[]): Promise<string[]> => {
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: 'Generate 4 follow-up questions based on the conversation. Return only the questions as a JSON array of strings. Make the questions concise and directly related to the last message.'
+        },
+        ...conversation,
+      ],
+      response_format: { type: 'json_object' },
+    });
+
+    const content = response.choices[0]?.message.content || '{"questions": []}';
+    const parsedContent = JSON.parse(content);
+    return parsedContent.questions || [];
+  } catch (error) {
+    console.error('Error generating follow-up questions:', error);
+    return [
+      'Can you tell me more about that?',
+      'What else would you like to know?',
+      'Do you have any specific questions?',
+      'Would you like me to explain further?'
     ];
   }
-  
-  return {
-    message: {
-      role: 'assistant',
-      content: responseText
-    },
-    suggestedPrompts
-  };
 };
+
+// Send message to OpenAI API
+export const sendMessage = async (messages: ChatMessage[]): Promise<ChatResponse> => {
+  try {
+    // Check if API key is available
+    if (!apiKey) {
+      throw new Error('OpenAI API key is not set. Please add it to your .env file.');
+    }
+
+    // Call OpenAI API
+    const response = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a helpful, friendly AI assistant. Provide concise and informative responses.'
+        },
+        ...messages
+      ],
+    });
+
+    const assistantMessage = response.choices[0]?.message;
+
+    if (!assistantMessage) {
+      throw new Error('No response from OpenAI API');
+    }
+
+    // Generate follow-up questions
+    const suggestedPrompts = await generateFollowUpQuestions([
+      ...messages, 
+      { 
+        role: 'assistant', 
+        content: assistantMessage.content || '' 
+      }
+    ]);
+
+    return {
+      message: {
+        role: 'assistant',
+        content: assistantMessage.content || ''
+      },
+      suggestedPrompts
+    };
+  } catch (error) {
+    // Improved error logging
+    if (error instanceof Error) {
+      console.error('OpenAI API Error:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+    } else {
+      console.error('Unknown error:', error);
+    }
+
+    // Check if it's an API key error
+    if (error instanceof Error && error.message.includes('API key')) {
+      return {
+        message: {
+          role: 'assistant',
+          content: 'API key error: Please check your OpenAI API key configuration.'
+        },
+        suggestedPrompts: [
+          'Check your .env file',
+          'Verify your API key is valid',
+          'Make sure the API key is properly set',
+          'Contact support if the issue persists'
+        ]
+      };
+    }
+
+    // General error response
+    return {
+      message: {
+        role: 'assistant',
+        content: 'An error occurred while processing your request. Please check the console for details and try again.'
+      },
+      suggestedPrompts: [
+        'Try asking your question again',
+        'Rephrase your question',
+        'Check your internet connection',
+        'Try a simpler query'
+      ]
+    };
+  }
+};
+
